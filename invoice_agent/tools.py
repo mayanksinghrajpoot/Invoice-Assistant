@@ -18,7 +18,8 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from invoice_agent.memory import LineItem, SessionMemory
+from invoice_agent.discount import lookup
+from invoice_agent.memory import DiscountDecision, LineItem, SessionMemory
 from invoice_agent.tax import classify_item
 
 # Bound by InvoiceAgent before each run so tools share one conversation.
@@ -77,8 +78,56 @@ def add_item(name: str, price: float, qty: int) -> str:
     )
 
 
+def check_discount() -> str:
+    """
+    Decide whether the current subtotal meets a discount threshold.
+
+    Does not apply the discount. compute_total / format_invoice apply it only
+    after this tool has recorded a decision on the current items.
+    """
+    if not MEMORY.items:
+        return json.dumps(
+            {
+                "ok": False,
+                "error": "No items on the invoice yet. Call add_item first.",
+            }
+        )
+
+    subtotal = MEMORY.subtotal()
+    eligible, rate, threshold = lookup(subtotal)
+    if eligible:
+        reason = (
+            f"Subtotal Rs {subtotal:.2f} meets the Rs {threshold:,.0f} threshold, "
+            f"so {rate * 100:.0f}% off applies."
+        )
+    else:
+        reason = (
+            f"Subtotal Rs {subtotal:.2f} is below Rs 1,000, so no discount applies."
+        )
+
+    MEMORY.discount_decision = DiscountDecision(
+        eligible=eligible,
+        rate=rate,
+        threshold=threshold,
+        subtotal=subtotal,
+        reason=reason,
+    )
+    return json.dumps(
+        {
+            "ok": True,
+            "eligible": eligible,
+            "rate_percent": round(rate * 100, 2),
+            "threshold": threshold,
+            "subtotal": subtotal,
+            "reason": reason,
+            "next": "Call compute_total or format_invoice. They will apply this decision.",
+        }
+    )
+
+
 REGISTRY: dict[str, Callable[..., str]] = {
     "add_item": add_item,
+    "check_discount": check_discount,
 }
 
 TOOL_SCHEMA: list[dict[str, Any]] = [
@@ -108,6 +157,19 @@ TOOL_SCHEMA: list[dict[str, Any]] = [
                 },
                 "required": ["name", "price", "qty"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_discount",
+            "description": (
+                "Look at the current subtotal and decide whether a discount "
+                "threshold is met. Call this after adding items and before "
+                "compute_total or format_invoice. Does not apply the discount "
+                "itself."
+            ),
+            "parameters": {"type": "object", "properties": {}},
         },
     },
 ]
