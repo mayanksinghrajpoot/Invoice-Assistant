@@ -67,11 +67,20 @@ def classify_item(name: str) -> tuple[str, float]:
 
 
 def _contains_word(text: str, keyword: str) -> bool:
-    """True if keyword appears as a whole phrase inside text."""
+    """True if keyword appears as a whole phrase inside text (plurals ok)."""
     if " " in keyword:
-        return keyword in text
+        return keyword in text or (keyword + "s") in text
     tokens = set(text.replace("-", " ").split())
-    return keyword in tokens
+    if keyword in tokens:
+        return True
+    # Accept simple English plurals: biscuit↔biscuits, pen↔pens
+    return any(
+        token == keyword
+        or token == keyword + "s"
+        or (token.endswith("s") and token[:-1] == keyword)
+        or (keyword.endswith("s") and keyword[:-1] == token)
+        for token in tokens
+    )
 
 
 def slab_table() -> str:
