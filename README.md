@@ -33,7 +33,10 @@ cp .env.example .env   # optional: set PROVIDER=groq and GROQ_API_KEY
 ## Run
 
 ```bash
-# Offline planner (no key) — still shows a real multi-step tool trace
+# Browser UI (easiest way to use it)
+streamlit run app.py
+
+# Offline / LLM CLI — still shows a real multi-step tool trace
 python -m invoice_agent "Add 2 notebooks at 80 and 1 pen at 20, then total with 18% tax"
 
 # Tests
