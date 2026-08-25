@@ -110,6 +110,16 @@ def test_format_invoice_multiple_slabs(memory: SessionMemory) -> None:
     assert payload["discount"] == round(21800 * 0.15, 2)
 
 
+def test_format_invoice_auto_decides_discount_if_skipped(memory: SessionMemory) -> None:
+    """Even if the LLM forgets check_discount, totals must still decide."""
+    _add("backpack", 1200, 1)
+    assert memory.discount_decision is None
+    payload = json.loads(tools.format_invoice())
+    assert memory.discount_decision is not None
+    assert payload["discount"] == 60.0
+    assert payload["ok"] is True
+
+
 def test_unknown_tool_is_rejected() -> None:
     result = json.loads(call_tool("delete_database", {}))
     assert result["ok"] is False

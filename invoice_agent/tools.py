@@ -125,15 +125,39 @@ def check_discount() -> str:
     )
 
 
+def _ensure_discount_decision() -> None:
+    """If items exist but discount was never checked, decide now."""
+    if not MEMORY.items:
+        return
+    if MEMORY.discount_decision is not None:
+        return
+    subtotal = MEMORY.subtotal()
+    eligible, rate, threshold = lookup(subtotal)
+    if eligible:
+        reason = (
+            f"Subtotal Rs {subtotal:.2f} meets the Rs {threshold:,.0f} threshold, "
+            f"so {rate * 100:.0f}% off applies."
+        )
+    else:
+        reason = (
+            f"Subtotal Rs {subtotal:.2f} is below Rs 1,000, so no discount applies."
+        )
+    MEMORY.discount_decision = DiscountDecision(
+        eligible=eligible,
+        rate=rate,
+        threshold=threshold,
+        subtotal=subtotal,
+        reason=reason,
+    )
+
+
 def _applied_discount() -> tuple[float, str]:
     """Return (discount_amount, note) using the last check_discount decision."""
+    _ensure_discount_decision()
     subtotal = MEMORY.subtotal()
     decision = MEMORY.discount_decision
     if decision is None:
-        return 0.0, (
-            "No check_discount call on the current items. "
-            "Computed without a discount. Call check_discount first next time."
-        )
+        return 0.0, "No items on the invoice."
     if not decision.eligible:
         return 0.0, decision.reason
     amount = round(subtotal * decision.rate, 2)
