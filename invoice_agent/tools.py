@@ -180,10 +180,102 @@ def compute_total(tax_percent: float) -> str:
     )
 
 
+def format_invoice() -> str:
+    """
+    Print a formatted invoice using each item's GST slab.
+
+    Discount is spread across lines in proportion to their share of the
+    subtotal, then each line is taxed at its own slab.
+    """
+    if not MEMORY.items:
+        return json.dumps(
+            {"ok": False, "error": "No items on the invoice yet. Call add_item first."}
+        )
+
+    subtotal = MEMORY.subtotal()
+    discount_amount, discount_note = _applied_discount()
+    discount_rate = (discount_amount / subtotal) if subtotal else 0.0
+
+    lines: list[dict[str, Any]] = []
+    tax_by_slab: dict[str, float] = {}
+    tax_total = 0.0
+    taxable_total = 0.0
+
+    for item in MEMORY.items:
+        line_discount = round(item.amount * discount_rate, 2)
+        taxable = round(item.amount - line_discount, 2)
+        tax = round(taxable * (item.slab_percent / 100.0), 2)
+        taxable_total += taxable
+        tax_total += tax
+        slab_key = f"{item.slab_percent:g}%"
+        tax_by_slab[slab_key] = round(tax_by_slab.get(slab_key, 0.0) + tax, 2)
+        lines.append(
+            {
+                "name": item.name,
+                "qty": item.qty,
+                "price": item.price,
+                "amount": item.amount,
+                "discount": line_discount,
+                "taxable": taxable,
+                "gst_percent": item.slab_percent,
+                "tax": tax,
+                "line_total": round(taxable + tax, 2),
+            }
+        )
+
+    taxable_total = round(taxable_total, 2)
+    tax_total = round(tax_total, 2)
+    grand_total = round(taxable_total + tax_total, 2)
+
+    col = "{:<18} {:>4} {:>10} {:>10} {:>8} {:>8} {:>10}"
+    header = col.format("Item", "Qty", "Price", "Amount", "GST%", "Tax", "Line total")
+    rule = "-" * len(header)
+    body = [
+        header,
+        rule,
+    ]
+    for row in lines:
+        body.append(
+            col.format(
+                row["name"][:18],
+                row["qty"],
+                f"{row['price']:.2f}",
+                f"{row['amount']:.2f}",
+                f"{row['gst_percent']:g}",
+                f"{row['tax']:.2f}",
+                f"{row['line_total']:.2f}",
+            )
+        )
+    body.append(rule)
+    body.append(f"Subtotal          Rs {subtotal:.2f}")
+    body.append(f"Discount          Rs {discount_amount:.2f}  ({discount_note})")
+    body.append(f"Taxable           Rs {taxable_total:.2f}")
+    for slab_key in sorted(tax_by_slab, key=lambda s: float(s[:-1])):
+        body.append(f"GST {slab_key:<12} Rs {tax_by_slab[slab_key]:.2f}")
+    body.append(f"Grand total       Rs {grand_total:.2f}")
+    formatted = "\n".join(body)
+
+    return json.dumps(
+        {
+            "ok": True,
+            "formatted": formatted,
+            "subtotal": subtotal,
+            "discount": discount_amount,
+            "discount_note": discount_note,
+            "taxable": taxable_total,
+            "tax_by_slab": tax_by_slab,
+            "tax": tax_total,
+            "grand_total": grand_total,
+            "lines": lines,
+        }
+    )
+
+
 REGISTRY: dict[str, Callable[..., str]] = {
     "add_item": add_item,
     "check_discount": check_discount,
     "compute_total": compute_total,
+    "format_invoice": format_invoice,
 }
 
 TOOL_SCHEMA: list[dict[str, Any]] = [
@@ -248,6 +340,18 @@ TOOL_SCHEMA: list[dict[str, Any]] = [
                 },
                 "required": ["tax_percent"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "format_invoice",
+            "description": (
+                "Build a formatted invoice summary using each item's GST slab "
+                "(5/12/18/28 percent) after the check_discount decision. Use "
+                "this when the user wants a printed invoice or mixed tax rates."
+            ),
+            "parameters": {"type": "object", "properties": {}},
         },
     },
 ]
