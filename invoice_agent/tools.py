@@ -125,9 +125,65 @@ def check_discount() -> str:
     )
 
 
+def _applied_discount() -> tuple[float, str]:
+    """Return (discount_amount, note) using the last check_discount decision."""
+    subtotal = MEMORY.subtotal()
+    decision = MEMORY.discount_decision
+    if decision is None:
+        return 0.0, (
+            "No check_discount call on the current items. "
+            "Computed without a discount. Call check_discount first next time."
+        )
+    if not decision.eligible:
+        return 0.0, decision.reason
+    amount = round(subtotal * decision.rate, 2)
+    return amount, decision.reason
+
+
+def compute_total(tax_percent: float) -> str:
+    """
+    Tax the current invoice at one rate, after any decided discount.
+
+    This is the T8 required tool. For mixed GST slabs use format_invoice instead.
+    """
+    if not MEMORY.items:
+        return json.dumps(
+            {"ok": False, "error": "No items on the invoice yet. Call add_item first."}
+        )
+    try:
+        tax_p = _as_float(tax_percent)
+    except (TypeError, ValueError):
+        return json.dumps(
+            {"ok": False, "error": f"tax_percent must be a number, got {tax_percent!r}."}
+        )
+    if tax_p < 0:
+        return json.dumps({"ok": False, "error": "tax_percent cannot be negative."})
+
+    subtotal = MEMORY.subtotal()
+    discount_amount, discount_note = _applied_discount()
+    taxable = round(subtotal - discount_amount, 2)
+    tax_amount = round(taxable * (tax_p / 100.0), 2)
+    grand_total = round(taxable + tax_amount, 2)
+
+    return json.dumps(
+        {
+            "ok": True,
+            "item_count": len(MEMORY.items),
+            "subtotal": subtotal,
+            "discount": discount_amount,
+            "discount_note": discount_note,
+            "taxable": taxable,
+            "tax_percent": tax_p,
+            "tax": tax_amount,
+            "grand_total": grand_total,
+        }
+    )
+
+
 REGISTRY: dict[str, Callable[..., str]] = {
     "add_item": add_item,
     "check_discount": check_discount,
+    "compute_total": compute_total,
 }
 
 TOOL_SCHEMA: list[dict[str, Any]] = [
@@ -170,6 +226,28 @@ TOOL_SCHEMA: list[dict[str, Any]] = [
                 "itself."
             ),
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "compute_total",
+            "description": (
+                "Compute the invoice total at a single tax rate after any "
+                "discount already decided by check_discount. Use this when the "
+                "user asks for one tax percent. For mixed GST slabs, use "
+                "format_invoice instead."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tax_percent": {
+                        "type": "number",
+                        "description": "Tax rate to apply, for example 18 for 18%.",
+                    }
+                },
+                "required": ["tax_percent"],
+            },
         },
     },
 ]
