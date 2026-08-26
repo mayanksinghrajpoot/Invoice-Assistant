@@ -136,7 +136,7 @@ class InvoiceAgent:
         self,
         client: Any | None = None,
         model: str | None = None,
-        max_steps: int = 12,
+        max_steps: int = 48,
         verbose: bool = True,
     ) -> None:
         self.client = client
@@ -156,6 +156,38 @@ class InvoiceAgent:
         self.memory.reset()
         self.messages = [{"role": "system", "content": SYSTEM}]
         bind_memory(self.memory)
+
+    def _cart_note(self) -> dict[str, Any]:
+        snap = self.memory.snapshot()
+        return {
+            "role": "system",
+            "content": (
+                f"SESSION CART — {snap['item_count']} line item(s), "
+                f"subtotal Rs {snap['subtotal']}. Already on the invoice. "
+                "Do NOT add these again unless the user asks. "
+                f"Lines: {json.dumps(snap['items'])}"
+            ),
+        }
+
+    def _messages_for_model(self) -> list[dict[str, Any]]:
+        """Keep the system prompt, a fresh cart pin, and recent turns (large window)."""
+        bind_memory(self.memory)
+        head = [self.messages[0], self._cart_note()] if self.messages else [self._cart_note()]
+        body = self.messages[1:] if len(self.messages) > 1 else []
+        # Drop older cart pins so we do not stack them.
+        body = [
+            m
+            for m in body
+            if not (
+                m.get("role") == "system"
+                and isinstance(m.get("content"), str)
+                and m["content"].startswith("SESSION CART")
+            )
+        ]
+        keep = 80
+        if len(body) > keep:
+            body = body[-keep:]
+        return head + body
 
     def run(self, goal: str) -> RunResult:
         """Handle one user goal, keeping memory from earlier turns."""
@@ -185,8 +217,9 @@ class InvoiceAgent:
             self._log(f"THINK  step {step} — model choosing a tool (or a final answer)")
             response = self.client.chat.completions.create(
                 model=self.model,
-                messages=self.messages,
+                messages=self._messages_for_model(),
                 tools=TOOL_SCHEMA,
+                max_tokens=2048,
             )
             message = response.choices[0].message
             dumped = message.model_dump(exclude_none=True)

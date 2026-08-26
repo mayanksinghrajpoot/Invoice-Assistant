@@ -36,6 +36,16 @@ class LineItem:
             "slab_percent": self.slab_percent,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> LineItem:
+        return cls(
+            name=str(data["name"]),
+            price=float(data["price"]),
+            qty=int(data["qty"]),
+            category=str(data.get("category") or "standard"),
+            slab_percent=float(data.get("slab_percent") or 18.0),
+        )
+
 
 @dataclass
 class DiscountDecision:
@@ -81,6 +91,11 @@ class SessionMemory:
 
     def record_turn(self, goal: str) -> None:
         self.turns.append(goal)
+
+    def restore_items(self, rows: list[dict[str, Any]]) -> None:
+        """Rebuild the cart from a persisted snapshot without clearing turns."""
+        self.items = [LineItem.from_dict(row) for row in rows]
+        self.discount_decision = None
 
     def reset(self) -> None:
         self.items.clear()

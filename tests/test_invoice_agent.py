@@ -178,6 +178,24 @@ def test_memory_survives_later_turn() -> None:
     assert last["discount"] == round(42280 * 0.15, 2)
 
 
+def test_two_import_batches_append_until_reset() -> None:
+    from invoice_agent.agent import call_tool
+    from invoice_agent.tools import bind_memory
+
+    agent = InvoiceAgent(verbose=False)
+    bind_memory(agent.memory)
+    json.loads(call_tool("add_item", {"name": "pen", "price": 40, "qty": 2}))
+    json.loads(call_tool("add_item", {"name": "bag", "price": 200, "qty": 1}))
+    snap = [item.as_dict() for item in agent.memory.items]
+    agent.memory.restore_items(snap)
+    bind_memory(agent.memory)
+    json.loads(call_tool("add_item", {"name": "textbook", "price": 450, "qty": 1}))
+    assert len(agent.memory.items) == 3
+    assert agent.memory.subtotal() == 80 + 200 + 450
+    agent.reset()
+    assert agent.memory.items == []
+
+
 def test_trace_explains_why_each_tool_ran() -> None:
     from invoice_agent.explain import build_process
 
