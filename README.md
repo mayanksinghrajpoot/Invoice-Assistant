@@ -2,6 +2,8 @@
 
 CSE476 CA1 Project 1 — an **agent** that builds a small invoice with tax and discounts.
 
+**Full walkthrough (run, use, process UI, viva):** see [GUIDE.md](GUIDE.md).
+
 ## Tools
 
 1. **`add_item(name, price, qty)`** — adds a line item and remembers it for the session. Classifies GST slab from the name (5 / 12 / 18 / 28%).
@@ -50,6 +52,10 @@ jupyter notebook demo_invoice_agent.ipynb
 
 ```
 InvoiceAssistant/
+  app.py
+  GUIDE.md            # full run / use / viva guide
+  README.md
+  demo_invoice_agent.ipynb
   invoice_agent/
     agent.py      # plan–act loop (LLM or offline)
     tools.py      # add_item, check_discount, compute_total, format_invoice
@@ -57,7 +63,6 @@ InvoiceAssistant/
     discount.py   # threshold rules
     tax.py        # GST slabs
     lanes.py      # Groq / Foundry / local Ollama
-  demo_invoice_agent.ipynb
+    explain.py    # process explanations for the UI
   tests/
-  README.md
 ```
