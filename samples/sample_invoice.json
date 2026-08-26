@@ -1,0 +1,10 @@
+{
+  "items": [
+    { "name": "notebook", "price": 80, "qty": 2 },
+    { "item": "pen", "rate": 20, "quantity": 1 },
+    { "product": "backpack", "price": 800, "qty": 1 },
+    { "name": "textbook", "price": 450, "qty": 3 },
+    { "name": "biscuits", "price": 100, "qty": 2 },
+    { "name": "television", "price": 42000, "qty": 1 }
+  ]
+}
