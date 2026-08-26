@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass, field
 from typing import Any
 
 from invoice_agent.discount import describe_rules
+from invoice_agent.explain import summarise_observation, why_tool
 from invoice_agent.memory import SessionMemory
 from invoice_agent.tax import slab_table
 from invoice_agent.tools import REGISTRY, TOOL_SCHEMA, bind_memory
@@ -48,10 +50,25 @@ class StepTrace:
     tool: str
     args: dict[str, Any]
     observation: str
+    why: str = ""
+    thought: str = ""
+    summary: str = ""
 
     def display(self) -> str:
         compact = self.observation if len(self.observation) < 240 else self.observation[:237] + "..."
         return f"[step {self.step}] {self.tool}({self.args}) -> {compact}"
+
+
+def _trace(step: int, tool: str, args: dict[str, Any], observation: str, thought: str = "") -> StepTrace:
+    return StepTrace(
+        step=step,
+        tool=tool,
+        args=args,
+        observation=observation,
+        why=why_tool(tool),
+        thought=thought,
+        summary=summarise_observation(tool, observation),
+    )
 
 
 @dataclass
@@ -61,6 +78,7 @@ class RunResult:
     trace: list[StepTrace] = field(default_factory=list)
     stopped_because: str = "goal met"
     mode: str = "offline"
+    goal: str = ""
 
     def print_trace(self) -> None:
         print(f"mode={self.mode}  steps={self.steps}  stopped={self.stopped_because}")
@@ -128,6 +146,12 @@ class InvoiceAgent:
         self.memory = SessionMemory()
         self.messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM}]
 
+    def _log(self, line: str) -> None:
+        """Live process log — goes to the terminal that launched Streamlit/CLI."""
+        if not self.verbose:
+            return
+        print(f"[invoice] {line}", file=sys.stderr, flush=True)
+
     def reset(self) -> None:
         self.memory.reset()
         self.messages = [{"role": "system", "content": SYSTEM}]
@@ -138,14 +162,19 @@ class InvoiceAgent:
         bind_memory(self.memory)
         self.memory.record_turn(goal)
         self.messages.append({"role": "user", "content": goal})
+        self._log("=" * 56)
+        self._log(f"GOAL   {goal}")
+        self._log(f"MODE   {'llm' if self.client else 'offline'}")
 
         if self.client is None:
             result = self._run_offline(goal)
         else:
             result = self._run_llm()
 
-        if self.verbose:
-            result.print_trace()
+        result.goal = goal
+        self._log(f"STOP   {result.stopped_because}  ({result.steps} step(s))")
+        self._log("ANSWER " + (result.answer or "").replace("\n", " / ")[:240])
+        self._log("=" * 56)
         return result
 
     def _run_llm(self) -> RunResult:
@@ -153,6 +182,7 @@ class InvoiceAgent:
         trace: list[StepTrace] = []
 
         for step in range(1, self.max_steps + 1):
+            self._log(f"THINK  step {step} — model choosing a tool (or a final answer)")
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=self.messages,
@@ -164,6 +194,7 @@ class InvoiceAgent:
 
             if not message.tool_calls:
                 answer = message.content or ""
+                self._log("DONE   model returned a final answer (no more tools)")
                 return RunResult(
                     answer=answer,
                     steps=step,
@@ -172,6 +203,9 @@ class InvoiceAgent:
                     mode="llm",
                 )
 
+            thought = (message.content or "").strip()
+            if thought:
+                self._log(f"THINK  {thought[:200]}")
             for call in message.tool_calls:
                 name = call.function.name
                 try:
@@ -180,8 +214,12 @@ class InvoiceAgent:
                     args = {}
                 if not isinstance(args, dict):
                     args = {}
+                self._log(f"ACT    {name}({args})")
                 observation = call_tool(name, args)
-                trace.append(StepTrace(step=step, tool=name, args=args, observation=observation))
+                item = _trace(step, name, args, observation, thought=thought)
+                self._log(f"OBS    {item.summary}")
+                trace.append(item)
+                thought = ""
                 detector.record(name, args)
                 self.messages.append(
                     {"role": "tool", "tool_call_id": call.id, "content": observation}
@@ -218,9 +256,14 @@ class InvoiceAgent:
         def act(name: str, args: dict[str, Any]) -> str:
             nonlocal step
             step += 1
+            self._log(f"ACT    {name}({args})")
             observation = call_tool(name, args)
-            trace.append(StepTrace(step=step, tool=name, args=args, observation=observation))
+            item = _trace(step, name, args, observation)
+            self._log(f"OBS    {item.summary}")
+            trace.append(item)
             return observation
+
+        self._log("THINK  offline planner parsing items / deciding tools")
 
         items = _parse_items(goal)
         if items:

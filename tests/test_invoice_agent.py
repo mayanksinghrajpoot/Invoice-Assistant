@@ -176,3 +176,48 @@ def test_memory_survives_later_turn() -> None:
     last = json.loads(third.trace[-1].observation)
     assert last["subtotal"] == 42280
     assert last["discount"] == round(42280 * 0.15, 2)
+
+
+def test_trace_explains_why_each_tool_ran() -> None:
+    from invoice_agent.explain import build_process
+
+    agent = InvoiceAgent(verbose=False)
+    result = agent.run(
+        "Add 2 notebooks at Rs 80 and 1 pen at Rs 20, then give me the total with 18% tax."
+    )
+    assert result.trace
+    assert all(step.why for step in result.trace)
+    assert all(step.summary for step in result.trace)
+    process = build_process(
+        goal="demo",
+        mode=result.mode,
+        trace=result.trace,
+        stopped_because=result.stopped_because,
+        memory_snapshot=agent.memory.snapshot(),
+    )
+    kinds = {stage["kind"] for stage in process}
+    assert {"receive", "think", "act", "observe", "remember", "answer"} <= kinds
+
+
+def test_excel_csv_import() -> None:
+    from invoice_agent.excel_import import from_csv_bytes, parse_rows
+
+    csv = b"item,price,qty\npen,40,2\nbag,200,1\n"
+    items = from_csv_bytes(csv)
+    assert items == [("pen", 40.0, 2), ("bag", 200.0, 1)]
+    rows = parse_rows(
+        ["name", "rate", "quantity"],
+        [["notebook", "80", "2"]],
+    )
+    assert rows == [("notebook", 80.0, 2)]
+
+
+def test_json_import() -> None:
+    from invoice_agent.excel_import import from_json_bytes, from_upload
+
+    raw = b'[{"name": "pen", "price": 40, "qty": 2}, {"item": "bag", "rate": 200}]'
+    assert from_json_bytes(raw) == [("pen", 40.0, 2), ("bag", 200.0, 1)]
+    wrapped = b'{"items": [{"product": "textbook", "price": 450, "quantity": 3}]}'
+    assert from_json_bytes(wrapped) == [("textbook", 450.0, 3)]
+    assert from_upload("cart.json", raw)[0][0] == "pen"
+
