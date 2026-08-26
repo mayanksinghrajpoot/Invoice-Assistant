@@ -31,6 +31,20 @@ def _add(name: str, price: float, qty: int) -> dict:
     return json.loads(tools.add_item(name, price, qty))
 
 
+def test_same_item_increases_quantity() -> None:
+    mem = SessionMemory()
+    bind_memory(mem)
+    first = json.loads(tools.add_item("notebook", 80, 2))
+    second = json.loads(tools.add_item("notebook", 80, 2))
+    assert first["merged"] is False
+    assert second["merged"] is True
+    assert len(mem.items) == 1
+    assert mem.items[0].qty == 4
+    assert mem.subtotal() == 320
+    json.loads(tools.add_item("notebook", 90, 1))
+    assert len(mem.items) == 2
+
+
 def test_add_item_remembers_line(memory: SessionMemory) -> None:
     result = _add("pen", 20, 2)
     assert result["ok"] is True

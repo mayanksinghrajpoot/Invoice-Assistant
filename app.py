@@ -266,18 +266,19 @@ def _ingest_sheet(filename: str, data: bytes) -> str:
         )
     _persist_bill()
     snap = agent.memory.snapshot()
-    added_n = len(agent.memory.items) - before
+    added_n = sum(1 for line in lines if line.startswith("-"))
     agent._log(
-        f"STOP   appended {added_n}; cart now {snap['item_count']} item(s), "
+        f"STOP   processed {added_n} row(s); unique lines {snap['item_count']}, "
         f"Rs {snap['subtotal']:.2f}"
     )
     agent._log("=" * 56)
     body = "\n".join(lines) if lines else "No new rows added."
     return (
-        f"Added **{added_n}** row(s) from **{filename}** (did not replace the cart).\n\n"
-        f"{body}\n\n"
-        f"Bill now **{snap['item_count']}** item(s), subtotal **Rs {snap['subtotal']:.2f}**. "
-        "Upload another file to add more, or tap **Print invoice (memory)**."
+        f"Loaded **{filename}**. Same name + price **updates quantity** "
+        f"(no extra rows).\n\n{body}\n\n"
+        f"Bill now **{snap['item_count']}** unique line(s), "
+        f"subtotal **Rs {snap['subtotal']:.2f}**. "
+        "Upload another file to add/merge more, or tap **Print invoice (memory)**."
     )
 
 

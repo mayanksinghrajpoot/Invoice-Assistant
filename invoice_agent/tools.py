@@ -66,14 +66,20 @@ def add_item(name: str, price: float, qty: int) -> str:
         category=category,
         slab_percent=slab_percent,
     )
-    MEMORY.add_item(item)
+    stored = MEMORY.add_item(item)
+    merged = stored is not item
     return json.dumps(
         {
             "ok": True,
-            "added": item.as_dict(),
+            "added": stored.as_dict(),
+            "merged": merged,
             "item_count": len(MEMORY.items),
             "subtotal": MEMORY.subtotal(),
-            "note": "Discount decision was cleared because the invoice changed. Call check_discount again before computing a total.",
+            "note": (
+                f"Quantity for {stored.name} is now {stored.qty} (same item combined)."
+                if merged
+                else "New line added. Discount decision was cleared because the invoice changed."
+            ),
         }
     )
 

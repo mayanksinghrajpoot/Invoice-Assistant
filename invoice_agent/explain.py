@@ -55,8 +55,9 @@ def summarise_observation(tool: str, observation: str) -> str:
 
     if tool == "add_item":
         added = data.get("added") or {}
+        verb = "Updated qty to" if data.get("merged") else "Remembered"
         return (
-            f"Remembered {added.get('qty')} × {added.get('name')} at "
+            f"{verb} {added.get('qty')} × {added.get('name')} at "
             f"Rs {added.get('price')} (GST {added.get('slab_percent')}%). "
             f"Running subtotal Rs {data.get('subtotal')}."
         )

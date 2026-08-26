@@ -12,6 +12,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def _line_key(name: str, price: float) -> tuple[str, float]:
+    return " ".join(str(name).lower().split()), round(float(price), 2)
+
+
 @dataclass
 class LineItem:
     """One row on the invoice."""
@@ -82,8 +86,15 @@ class SessionMemory:
     turns: list[str] = field(default_factory=list)
 
     def add_item(self, item: LineItem) -> LineItem:
+        """Append a new row, or bump qty if the same name+price is already on the bill."""
+        key = _line_key(item.name, item.price)
+        for existing in self.items:
+            if _line_key(existing.name, existing.price) == key:
+                existing.qty += item.qty
+                self.discount_decision = None
+                return existing
         self.items.append(item)
-        self.discount_decision = None  # stale: totals changed
+        self.discount_decision = None
         return item
 
     def subtotal(self) -> float:
@@ -93,9 +104,11 @@ class SessionMemory:
         self.turns.append(goal)
 
     def restore_items(self, rows: list[dict[str, Any]]) -> None:
-        """Rebuild the cart from a persisted snapshot without clearing turns."""
-        self.items = [LineItem.from_dict(row) for row in rows]
+        """Rebuild the cart from a persisted snapshot, merging duplicate names."""
+        self.items = []
         self.discount_decision = None
+        for row in rows:
+            self.add_item(LineItem.from_dict(row))
 
     def reset(self) -> None:
         self.items.clear()
