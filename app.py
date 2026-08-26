@@ -25,6 +25,7 @@ from invoice_agent.discount import describe_rules
 from invoice_agent.excel_import import SheetError, from_upload
 from invoice_agent.explain import STAGE_LABELS, build_process, why_tool
 from invoice_agent.lanes import LaneError, describe, get_client, get_model, lane_is_configured
+from invoice_agent.pdf import invoice_pdf
 from invoice_agent.tax import slab_table
 from invoice_agent.tools import add_item, bind_memory
 
@@ -50,44 +51,57 @@ EXAMPLES = [
         "No re-add. Reads the cart, decides discount, prints slabs.",
     ),
 ]
+PRINT_PROMPT = EXAMPLES[3][1]
 
 CSS = """
 <style>
+header[data-testid="stHeader"] {
+  background: transparent;
+  border-bottom: none;
+}
+div[data-testid="stDecoration"] { display: none; }
 .stApp {
   background:
     radial-gradient(1200px 500px at 8% -10%, #dceee6 0%, transparent 55%),
     radial-gradient(900px 400px at 110% 0%, #efe6d4 0%, transparent 50%),
     #f4f1ea;
 }
-.block-container { padding-top: 1.1rem; max-width: 1280px; }
-.hero {
-  background: #16382f;
-  color: #f4f1ea;
-  border-radius: 18px;
-  padding: 1.1rem 1.3rem 1rem;
-  margin-bottom: 0.85rem;
-  box-shadow: 0 18px 40px rgba(22, 56, 47, 0.18);
+.block-container {
+  padding-top: 3.4rem !important;
+  padding-bottom: 7.5rem !important;
+  max-width: 1080px;
 }
-.hero h1 { font-size: 1.5rem; margin: 0 0 0.25rem 0; color: #f4f1ea !important; }
-.hero p { margin: 0; color: #c9d9d2; font-size: 0.95rem; }
+.hero {
+  background:
+    linear-gradient(120deg, rgba(255,253,248,0.92) 0%, rgba(220,238,230,0.7) 48%, rgba(239,230,212,0.78) 100%);
+  color: #16382f;
+  border: 1px solid rgba(31, 111, 91, 0.16);
+  border-radius: 18px;
+  padding: 1.15rem 1.3rem 1.05rem;
+  margin: 0.15rem 0 1rem;
+  box-shadow: 0 10px 28px rgba(22, 56, 47, 0.06);
+}
+.hero h1 { font-size: 1.55rem; margin: 0.35rem 0 0.3rem 0; color: #16382f !important; }
+.hero p { margin: 0; color: #4a5c56; font-size: 0.95rem; }
 .badge {
   display: inline-block;
-  background: #c9f07a;
-  color: #16382f;
+  background: #e8f3ea;
+  color: #1f6f5b;
+  border: 1px solid #c5ddd0;
   font-weight: 600;
   font-size: 0.72rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  padding: 0.18rem 0.5rem;
+  padding: 0.18rem 0.55rem;
   border-radius: 999px;
   margin-right: 0.4rem;
 }
-.pipeline { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.85rem 0 0.2rem; }
+.pipeline { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.85rem 0 0.1rem; }
 .pipe {
-  background: #21483d; color: #e6efe9; border: 1px solid #2f5d50;
+  background: #fffdf8; color: #16382f; border: 1px solid #ddd4c3;
   border-radius: 999px; padding: 0.28rem 0.7rem; font-size: 0.78rem; font-weight: 500;
 }
-.pipe em { color: #c9f07a; font-style: normal; }
+.pipe em { color: #1f6f5b; font-style: normal; }
 .stage {
   border-radius: 14px; padding: 0.75rem 0.85rem; margin-bottom: 0.55rem;
   border: 1px solid #ddd4c3; background: #fffdf8;
@@ -107,6 +121,29 @@ CSS = """
 .invoice-card, .empty {
   background: #fffdf8; border: 1px dashed #cbbd9f; border-radius: 14px;
   padding: 0.8rem; color: #3a3530;
+}
+.stChatMessage [data-testid="stExpander"] {
+  background: rgba(255, 253, 248, 0.9);
+  border: 1px solid #e4dccb;
+  border-radius: 12px;
+  margin-bottom: 0.7rem;
+}
+.stChatMessage [data-testid="stExpander"] summary {
+  font-size: 0.9rem;
+  color: #5c574e;
+}
+div[data-testid="stBottomBlockContainer"] {
+  padding-bottom: 0.55rem !important;
+  background: linear-gradient(180deg, rgba(244,241,234,0) 0%, #f4f1ea 32%);
+}
+div[data-testid="stBottomBlockContainer"] .stButton > button {
+  border: 1px solid #c5ddd0;
+  background: #e8f3ea;
+  color: #16382f;
+  font-weight: 600;
+  border-radius: 12px;
+  min-height: 2.75rem;
+  white-space: nowrap;
 }
 </style>
 """
@@ -157,44 +194,35 @@ def _ensure_state() -> None:
     _hydrate_bill()
 
 
-def _selected_turn() -> dict | None:
-    idx = st.session_state.selected
-    chat = st.session_state.chat
-    if idx is None:
-        for turn in reversed(chat):
-            if turn.get("role") == "assistant" and turn.get("process"):
-                return turn
-        return None
-    if 0 <= idx < len(chat):
-        return chat[idx]
-    return None
-
-
-def _render_message(i: int, turn: dict) -> None:
+def _render_message(_i: int, turn: dict) -> None:
     with st.chat_message(turn["role"]):
+        if turn["role"] == "assistant" and turn.get("process"):
+            label = (
+                f"Thinking · {turn.get('mode', '?')} · "
+                f"{turn.get('steps', 0)} step(s)"
+            )
+            with st.expander(label, expanded=False):
+                _render_process(turn)
         content = turn.get("content") or ""
         if turn["role"] == "assistant" and ("Grand total" in content or "----" in content):
             st.code(content, language=None)
         else:
             st.markdown(content)
-        if turn["role"] == "assistant" and turn.get("process"):
-            st.caption(
-                f"{turn.get('mode', '?')} · {turn.get('steps', 0)} step(s) · "
-                f"{turn.get('stopped_because', '?')}"
+        payload = turn.get("invoice_payload")
+        if payload:
+            st.download_button(
+                "Download PDF",
+                data=invoice_pdf(payload),
+                file_name="invoice.pdf",
+                mime="application/pdf",
+                key=f"dl_pdf_{_i}",
             )
-            if st.button("Show how this reply was built", key=f"show_process_{i}"):
-                st.session_state.selected = i
-                st.rerun()
 
 
 def _render_process(turn: dict) -> None:
     process = turn.get("process") or []
     if not process:
-        st.markdown(
-            '<div class="empty">Send a goal or attach a file. This panel shows '
-            "receive → think → tool → observe → memory → answer.</div>",
-            unsafe_allow_html=True,
-        )
+        st.caption("No tool trace for this reply.")
         return
     chips = []
     seen = []
@@ -293,6 +321,17 @@ def _assistant_from_run(prompt: str, result) -> dict:
     answer = result.answer or "(no answer)"
     if result.stopped_because == "budget":
         answer = f"{answer}\n\n_(stopped: step budget)_"
+    invoice_payload = None
+    for step in reversed(result.trace):
+        if step.tool != "format_invoice":
+            continue
+        try:
+            data = json.loads(step.observation)
+        except json.JSONDecodeError:
+            break
+        if data.get("ok") and data.get("lines"):
+            invoice_payload = data
+        break
     return {
         "role": "assistant",
         "content": answer,
@@ -302,6 +341,7 @@ def _assistant_from_run(prompt: str, result) -> dict:
         "steps": result.steps,
         "stopped_because": result.stopped_because,
         "goal": prompt,
+        "invoice_payload": invoice_payload,
     }
 
 
@@ -328,7 +368,7 @@ st.markdown(
   <span class="badge">{mode_label}</span>
   <h1>Simple Invoice Assistant</h1>
   <p>An agent, not a chatbot. It calls tools, remembers the cart, then answers.
-  {html.escape(lane_line)}</p>
+  Open <em>Thinking</em> on any reply to see the steps. {html.escape(lane_line)}</p>
   <div class="pipeline">
     <span class="pipe">1. Receive</span>
     <span class="pipe">2. Think</span>
@@ -404,52 +444,50 @@ with st.sidebar:
         for name in ("add_item", "check_discount", "compute_total", "format_invoice"):
             st.markdown(f"**`{name}`** — {why_tool(name)}")
 
-left, right = st.columns([1.15, 1], gap="large")
-
-with left:
-    st.subheader("Chat")
-    if not st.session_state.chat:
-        st.markdown(
-            """
+st.subheader("Chat")
+if not st.session_state.chat:
+    st.markdown(
+        """
 <div class="empty">
 <strong>How to use</strong>
 <ol>
 <li>Type a goal, tap a sidebar example, or attach <code>.xlsx</code> / <code>.csv</code> / <code>.json</code>.</li>
 <li>Each file <em>adds</em> to the live invoice. Nothing is wiped until <strong>Clear invoice / new chat</strong>.</li>
-<li>Live THINK → ACT → OBS is in the terminal. This page shows the process on the right.</li>
+<li>Open the <em>Thinking</em> arrow on a reply to see receive → think → act → observe.</li>
 </ol>
 </div>
 """,
-            unsafe_allow_html=True,
-        )
-    for i, turn in enumerate(st.session_state.chat):
-        _render_message(i, turn)
-    if st.session_state.last_error:
-        st.error(st.session_state.last_error)
+        unsafe_allow_html=True,
+    )
+for i, turn in enumerate(st.session_state.chat):
+    _render_message(i, turn)
+if st.session_state.last_error:
+    st.error(st.session_state.last_error)
 
-with right:
-    st.subheader("Inside this reply")
-    selected = _selected_turn()
-    if selected is None:
-        st.markdown(
-            '<div class="empty">When you send a goal, this panel shows the exact process: '
-            "receive → think → each tool call → observe → memory → answer. "
-            "That is the proof this is an agent, not a one-shot chatbot.</div>",
-            unsafe_allow_html=True,
+raw = None
+with st._bottom:
+    print_col, chat_col = st.columns([1.15, 5.4], vertical_alignment="center")
+    with print_col:
+        cart_empty = not st.session_state.agent.memory.items
+        if st.button(
+            "Print invoice",
+            key="print_invoice_bottom",
+            disabled=cart_empty,
+            width="stretch",
+        ):
+            st.session_state.pending = PRINT_PROMPT
+            st.rerun()
+    with chat_col:
+        raw = st.chat_input(
+            "Add items, print the invoice, or attach .xlsx / .csv / .json",
+            accept_file=True,
+            file_type=["xlsx", "csv", "json"],
         )
-    else:
-        if selected.get("goal"):
-            st.markdown(f"**Goal:** {selected['goal']}")
-        _render_process(selected)
-
-raw = st.chat_input(
-    "Add items, print the invoice, or attach .xlsx / .csv / .json",
-    accept_file=True,
-    file_type=["xlsx", "csv", "json"],
-)
 text, files = _split_chat_input(raw)
 if "pending" in st.session_state and not text and not files:
     text = st.session_state.pop("pending")
+if text == PRINT_PROMPT and not st.session_state.agent.memory.items:
+    text = ""
 
 if text or files:
     st.session_state.last_error = None

@@ -6,3 +6,4 @@ ipykernel>=6.29
 pytest>=8.3
 streamlit>=1.32.0
 openpyxl>=3.1.0
+fpdf2>=2.8.0

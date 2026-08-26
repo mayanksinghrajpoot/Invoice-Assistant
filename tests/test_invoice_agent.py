@@ -253,3 +253,14 @@ def test_json_import() -> None:
     assert from_json_bytes(wrapped) == [("textbook", 450.0, 3)]
     assert from_upload("cart.json", raw)[0][0] == "pen"
 
+
+def test_invoice_pdf_bytes(memory: SessionMemory) -> None:
+    _add("notebook", 80, 2)
+    _add("pen", 20, 1)
+    payload = json.loads(tools.format_invoice())
+    from invoice_agent.pdf import invoice_pdf
+
+    pdf_bytes = invoice_pdf(payload)
+    assert pdf_bytes.startswith(b"%PDF")
+    assert len(pdf_bytes) > 500
+
